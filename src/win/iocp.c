@@ -107,3 +107,7 @@ int uv_iocp_start(uv_loop_t* loop,
 
   return 0;
 }
+<<<<<<< HEAD
+=======
+
+>>>>>>> e30105d... Patching libuv to allow insertion of iocp events
