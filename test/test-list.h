@@ -259,7 +259,6 @@ TEST_DECLARE   (fs_file_open_append)
 TEST_DECLARE   (fs_stat_missing_path)
 TEST_DECLARE   (fs_read_file_eof)
 TEST_DECLARE   (fs_event_watch_dir)
-TEST_DECLARE   (fs_event_watch_dir_recursive)
 TEST_DECLARE   (fs_event_watch_file)
 TEST_DECLARE   (fs_event_watch_file_twice)
 TEST_DECLARE   (fs_event_watch_file_current_dir)
@@ -271,8 +270,8 @@ TEST_DECLARE   (fs_event_close_in_callback)
 TEST_DECLARE   (fs_event_start_and_close)
 TEST_DECLARE   (fs_event_error_reporting)
 TEST_DECLARE   (fs_event_getpath)
-TEST_DECLARE   (fs_scandir_empty_dir)
-TEST_DECLARE   (fs_scandir_file)
+TEST_DECLARE   (fs_readdir_empty_dir)
+TEST_DECLARE   (fs_readdir_file)
 TEST_DECLARE   (fs_open_dir)
 TEST_DECLARE   (fs_rename_to_existing_file)
 TEST_DECLARE   (fs_write_multiple_bufs)
@@ -296,7 +295,9 @@ TEST_DECLARE   (dlerror)
 TEST_DECLARE   (poll_duplex)
 TEST_DECLARE   (poll_unidirectional)
 TEST_DECLARE   (poll_close)
-
+#ifdef _WIN32
+TEST_DECLARE   (poll_closesocket)
+#endif
 TEST_DECLARE   (ip4_addr)
 TEST_DECLARE   (ip6_addr_link_local)
 
@@ -591,8 +592,9 @@ TASK_LIST_START
   TEST_ENTRY  (poll_duplex)
   TEST_ENTRY  (poll_unidirectional)
   TEST_ENTRY  (poll_close)
-
-  TEST_ENTRY  (socket_buffer_size)
+#ifdef _WIN32
+  TEST_ENTRY  (poll_closesocket)
+#endif
 
   TEST_ENTRY  (spawn_fails)
 #ifndef _WIN32
@@ -634,7 +636,7 @@ TASK_LIST_START
   TEST_ENTRY  (listen_no_simultaneous_accepts)
   TEST_ENTRY  (fs_stat_root)
   TEST_ENTRY  (spawn_with_an_odd_path)
-  TEST_ENTRY  (ipc_listen_after_bind_twice)
+  TEST_ENTRY  (iocp)
 #else
   TEST_ENTRY  (emfile)
   TEST_ENTRY  (close_fd)
@@ -686,8 +688,8 @@ TASK_LIST_START
   TEST_ENTRY  (fs_event_start_and_close)
   TEST_ENTRY  (fs_event_error_reporting)
   TEST_ENTRY  (fs_event_getpath)
-  TEST_ENTRY  (fs_scandir_empty_dir)
-  TEST_ENTRY  (fs_scandir_file)
+  TEST_ENTRY  (fs_readdir_empty_dir)
+  TEST_ENTRY  (fs_readdir_file)
   TEST_ENTRY  (fs_open_dir)
   TEST_ENTRY  (fs_rename_to_existing_file)
   TEST_ENTRY  (fs_write_multiple_bufs)

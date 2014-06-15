@@ -158,6 +158,7 @@ extern "C" {
   XX(TTY, tty)                                                                \
   XX(UDP, udp)                                                                \
   XX(SIGNAL, signal)                                                          \
+  XX(IOCP, iocp)                                                              \
 
 #define UV_REQ_TYPE_MAP(XX)                                                   \
   XX(REQ, req)                                                                \
@@ -206,6 +207,7 @@ typedef struct uv_pipe_s uv_pipe_t;
 typedef struct uv_tty_s uv_tty_t;
 typedef struct uv_device_s uv_device_t;
 typedef struct uv_poll_s uv_poll_t;
+typedef struct uv_iocp_s uv_iocp_t;
 typedef struct uv_timer_s uv_timer_t;
 typedef struct uv_prepare_s uv_prepare_t;
 typedef struct uv_check_s uv_check_t;
@@ -300,6 +302,7 @@ typedef void (*uv_shutdown_cb)(uv_shutdown_t* req, int status);
 typedef void (*uv_connection_cb)(uv_stream_t* server, int status);
 typedef void (*uv_close_cb)(uv_handle_t* handle);
 typedef void (*uv_poll_cb)(uv_poll_t* handle, int status, int events);
+typedef void (*uv_iocp_cb)(uv_iocp_t* handle);
 typedef void (*uv_timer_cb)(uv_timer_t* handle);
 typedef void (*uv_async_cb)(uv_async_t* handle);
 typedef void (*uv_prepare_cb)(uv_prepare_t* handle);
@@ -744,6 +747,60 @@ UV_EXTERN int uv_poll_init_socket(uv_loop_t* loop,
 UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb);
 UV_EXTERN int uv_poll_stop(uv_poll_t* handle);
 
+/*
+ * uv_iocp_t is a subclass of uv_handle_t.
+ *
+ * The uv_iocp allows asynchronous file operations in Windows to be waited
+ * on manually.
+ *
+ * The purpose of uv_iocp is for interacting with "weird" file handles such
+ * as devices where the reads and writes to the handle must be made in a
+ * specific way (for example you must read a certain number of bytes).
+ * Since it is not feasible for libuv to predict every possible device or
+ * file handle which you may wish to read from or write to, uv_iocp allows
+ * you to associate an OVERLAPPED file handle, then call ReadFile() or
+ * WriteFile() yourself with your own parameters and then be called back on
+ * completion.
+ *
+ * The callback will be invoked regardless of whether ReadFile()/WriteFile()
+ * returns synchronously so you need not invoke your completion handler
+ * upon synchronous return.
+ *
+ * It is your responsibility to call GetOverlappedResult() when your callback
+ * is invoked in order to know how many bytes were read/written or to determine
+ * whether there was an error.
+ *
+ * On non-windows systems, uv_iocp is meaningless and always fails.
+ */
+struct uv_iocp_s {
+  UV_HANDLE_FIELDS
+  uv_iocp_cb iocp_cb;
+
+  /*
+   * This is set to a pointer to the internal OVERLAPPED structure
+   * needed for ReadFile() and WriteFile().
+   */
+  void* overlapped;
+
+  UV_IOCP_PRIVATE_FIELDS
+};
+
+/*
+ * Associates a callback with this IOCP handle.
+ * When an IO operation completes, this callback will be invoked.
+ */
+UV_EXTERN int uv_iocp_start(uv_loop_t* loop,
+                            uv_iocp_t* handle,
+                            uv_os_file_t fd,
+                            uv_iocp_cb cb);
+
+/*
+ * Stops the callback from being triggered when further IOCP events occur
+ * on this handle.
+ * Warning: Be careful not to free the handle (which contains the OVERLAPPED)
+ *          until you are sure that there are no outstanding requests.
+ */
+UV_EXTERN int uv_iocp_stop(uv_iocp_t* handle);
 
 struct uv_prepare_s {
   UV_HANDLE_FIELDS

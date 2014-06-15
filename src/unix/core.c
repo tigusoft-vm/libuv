@@ -35,7 +35,7 @@
 #include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <limits.h> /* INT_MAX, PATH_MAX, IOV_MAX */
+#include <limits.h> /* INT_MAX, PATH_MAX */
 #include <sys/uio.h> /* writev */
 #include <sys/resource.h> /* getrusage */
 #include <pwd.h>
@@ -55,13 +55,13 @@
 # include <sys/ioctl.h>
 #endif
 
-#if defined(__FreeBSD__) || defined(__DragonFly__)
+#ifdef __FreeBSD__
 # include <sys/sysctl.h>
 # include <sys/filio.h>
 # include <sys/ioctl.h>
 # include <sys/wait.h>
 # define UV__O_CLOEXEC O_CLOEXEC
-# if defined(__FreeBSD__) && __FreeBSD__ >= 10
+# if __FreeBSD__ >= 10
 #  define uv__accept4 accept4
 #  define UV__SOCK_NONBLOCK SOCK_NONBLOCK
 #  define UV__SOCK_CLOEXEC  SOCK_CLOEXEC
@@ -71,11 +71,7 @@
 # endif
 #endif
 
-#ifdef _AIX
-#include <sys/ioctl.h>
-#endif
-
-static int uv__run_pending(uv_loop_t* loop);
+static void uv__run_pending(uv_loop_t* loop);
 
 /* Verify that uv_buf_t is ABI-compatible with struct iovec. */
 STATIC_ASSERT(sizeof(uv_buf_t) == sizeof(struct iovec));
@@ -333,14 +329,17 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     uv__update_time(loop);
 
   while (r != 0 && loop->stop_flag == 0) {
+    UV_TICK_START(loop, mode);
+
     uv__update_time(loop);
     uv__run_timers(loop);
     ran_pending = uv__run_pending(loop);
     uv__run_idle(loop);
     uv__run_prepare(loop);
+    uv__run_pending(loop);
 
     timeout = 0;
-    if ((mode == UV_RUN_ONCE && !ran_pending) || mode == UV_RUN_DEFAULT)
+    if ((mode & UV_RUN_NOWAIT) == 0)
       timeout = uv_backend_timeout(loop);
 
     uv__io_poll(loop, timeout);
@@ -348,7 +347,7 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     uv__run_closing_handles(loop);
 
     if (mode == UV_RUN_ONCE) {
-      /* UV_RUN_ONCE implies forward progress: at least one callback must have
+      /* UV_RUN_ONCE implies forward progess: at least one callback must have
        * been invoked when it returns. uv__io_poll() can return without doing
        * I/O (meaning: no callbacks) when its timeout expires - which means we
        * have pending timers that satisfy the forward progress constraint.
@@ -361,7 +360,9 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     }
 
     r = uv__loop_alive(loop);
-    if (mode == UV_RUN_ONCE || mode == UV_RUN_NOWAIT)
+    UV_TICK_STOP(loop, mode);
+
+    if (mode & (UV_RUN_ONCE | UV_RUN_NOWAIT))
       break;
   }
 
@@ -494,8 +495,7 @@ int uv__close(int fd) {
 }
 
 
-#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__) || \
-    defined(_AIX) || defined(__DragonFly__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
 
 int uv__nonblock(int fd, int set) {
   int r;
@@ -524,8 +524,7 @@ int uv__cloexec(int fd, int set) {
   return 0;
 }
 
-#else /* !(defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__) || \
-	   defined(_AIX) || defined(__DragonFly__)) */
+#else /* !(defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)) */
 
 int uv__nonblock(int fd, int set) {
   int flags;
@@ -588,8 +587,7 @@ int uv__cloexec(int fd, int set) {
   return 0;
 }
 
-#endif /* defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__) || \
-	  defined(_AIX) || defined(__DragonFly__) */
+#endif /* defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__) */
 
 
 /* This function is not execve-safe, there is a race window
@@ -658,12 +656,7 @@ int uv_cwd(char* buffer, size_t* size) {
   if (getcwd(buffer, *size) == NULL)
     return -errno;
 
-  *size = strlen(buffer);
-  if (*size > 1 && buffer[*size - 1] == '/') {
-    buffer[*size-1] = '\0';
-    (*size)--;
-  }
-
+  *size = strlen(buffer) + 1;
   return 0;
 }
 
@@ -688,53 +681,16 @@ void uv_disable_stdio_inheritance(void) {
 }
 
 
-int uv_fileno(const uv_handle_t* handle, uv_os_fd_t* fd) {
-  int fd_out;
-
-  switch (handle->type) {
-  case UV_TCP:
-  case UV_NAMED_PIPE:
-  case UV_TTY:
-  case UV_DEVICE:
-    fd_out = uv__stream_fd((uv_stream_t*) handle);
-    break;
-
-  case UV_UDP:
-    fd_out = ((uv_udp_t *) handle)->io_watcher.fd;
-    break;
-
-  case UV_POLL:
-    fd_out = ((uv_poll_t *) handle)->io_watcher.fd;
-    break;
-
-  default:
-    return -EINVAL;
-  }
-
-  if (uv__is_closing(handle) || fd_out == -1)
-    return -EBADF;
-
-  *fd = fd_out;
-  return 0;
-}
-
-
-static int uv__run_pending(uv_loop_t* loop) {
+static void uv__run_pending(uv_loop_t* loop) {
   QUEUE* q;
   QUEUE pq;
   uv__io_t* w;
 
-  if (QUEUE_EMPTY(&loop->pending_queue))
-    return 0;
-
-  QUEUE_INIT(&pq);
-  q = QUEUE_HEAD(&loop->pending_queue);
-  QUEUE_SPLIT(&loop->pending_queue, q, &pq);
-
-  while (!QUEUE_EMPTY(&pq)) {
-    q = QUEUE_HEAD(&pq);
+  while (!QUEUE_EMPTY(&loop->pending_queue)) {
+    q = QUEUE_HEAD(&loop->pending_queue);
     QUEUE_REMOVE(q);
     QUEUE_INIT(q);
+
     w = QUEUE_DATA(q, uv__io_t, pending_queue);
     w->cb(loop, w, UV__POLLOUT);
   }
@@ -774,8 +730,8 @@ static void maybe_resize(uv_loop_t* loop, unsigned int len) {
   }
 
   nwatchers = next_power_of_two(len + 2) - 2;
-  watchers = uv__realloc(loop->watchers,
-                         (nwatchers + 2) * sizeof(loop->watchers[0]));
+  watchers = realloc(loop->watchers,
+                     (nwatchers + 2) * sizeof(loop->watchers[0]));
 
   if (watchers == NULL)
     abort();
@@ -928,8 +884,7 @@ int uv__open_cloexec(const char* path, int flags) {
   int err;
   int fd;
 
-#if defined(__linux__) || (defined(__FreeBSD__) && __FreeBSD__ >= 9) || \
-    defined(__DragonFly__)
+#if defined(__linux__) || (defined(__FreeBSD__) && __FreeBSD__ >= 9)
   static int no_cloexec;
 
   if (!no_cloexec) {
@@ -1015,83 +970,18 @@ int uv__dup2_cloexec(int oldfd, int newfd) {
 }
 
 
-int uv_os_homedir(char* buffer, size_t* size) {
-  struct passwd pw;
-  struct passwd* result;
-  char* buf;
-  uid_t uid;
-  size_t bufsize;
-  size_t len;
-  long initsize;
-  int r;
+/* IOCP only makes sense under windows. */
+int uv_iocp_stop(uv_iocp_t* handle) {
+  return UV_EINVAL;
+}
 
   if (buffer == NULL || size == NULL || *size == 0)
     return -EINVAL;
 
-  /* Check if the HOME environment variable is set first */
-  buf = getenv("HOME");
-
-  if (buf != NULL) {
-    len = strlen(buf);
-
-    if (len >= *size) {
-      *size = len;
-      return -ENOBUFS;
-    }
-
-    memcpy(buffer, buf, len + 1);
-    *size = len;
-
-    return 0;
-  }
-
-  /* HOME is not set, so call getpwuid() */
-  initsize = sysconf(_SC_GETPW_R_SIZE_MAX);
-
-  if (initsize <= 0)
-    bufsize = 4096;
-  else
-    bufsize = (size_t) initsize;
-
-  uid = getuid();
-  buf = NULL;
-
-  for (;;) {
-    uv__free(buf);
-    buf = uv__malloc(bufsize);
-
-    if (buf == NULL)
-      return -ENOMEM;
-
-    r = getpwuid_r(uid, &pw, buf, bufsize, &result);
-
-    if (r != ERANGE)
-      break;
-
-    bufsize *= 2;
-  }
-
-  if (r != 0) {
-    uv__free(buf);
-    return -r;
-  }
-
-  if (result == NULL) {
-    uv__free(buf);
-    return -ENOENT;
-  }
-
-  len = strlen(pw.pw_dir);
-
-  if (len >= *size) {
-    *size = len;
-    uv__free(buf);
-    return -ENOBUFS;
-  }
-
-  memcpy(buffer, pw.pw_dir, len + 1);
-  *size = len;
-  uv__free(buf);
-
-  return 0;
+/* IOCP only makes sense under windows. */
+int uv_iocp_start(uv_loop_t* loop,
+                  uv_iocp_t* handle,
+                  uv_os_file_t fd,
+                  uv_iocp_cb cb) {
+  return UV_EINVAL;
 }
