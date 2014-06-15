@@ -101,6 +101,13 @@ struct uv__async {
   int wfd;
 };
 
+struct uv__work {
+  void (*work)(struct uv__work *w);
+  void (*done)(struct uv__work *w, int status);
+  struct uv_loop_s* loop;
+  void* wq[2];
+};
+
 #ifndef UV_PLATFORM_SEM_T
 # define UV_PLATFORM_SEM_T sem_t
 #endif
@@ -125,6 +132,7 @@ typedef struct uv_buf_t {
 
 typedef int uv_file;
 typedef int uv_os_sock_t;
+typedef int uv_os_file_t; // apicjd
 typedef int uv_os_fd_t;
 
 #define UV_ONCE_INIT PTHREAD_ONCE_INIT
@@ -219,7 +227,8 @@ typedef struct {
   uv_async_t wq_async;                                                        \
   uv_rwlock_t cloexec_lock;                                                   \
   uv_handle_t* closing_handles;                                               \
-  void* process_handles[2];                                                   \
+  void* process_handles[1][2];	//apicjd 
+  //void* process_handles[2];                                            \
   void* prepare_handles[2];                                                   \
   void* check_handles[2];                                                     \
   void* idle_handles[2];                                                      \
@@ -258,7 +267,8 @@ typedef struct {
 
 #define UV_UDP_SEND_PRIVATE_FIELDS                                            \
   void* queue[2];                                                             \
-  struct sockaddr_storage addr;                                               \
+  struct sockaddr_in6 addr;	// apicjd
+  struct sockaddr_storage addr;                                              \
   unsigned int nbufs;                                                         \
   uv_buf_t* bufs;                                                             \
   ssize_t status;                                                             \
@@ -293,6 +303,8 @@ typedef struct {
 #define UV_PIPE_PRIVATE_FIELDS                                                \
   const char* pipe_fname; /* strdup'ed */
 
+#define UV_IOCP_PRIVATE_FIELDS /* empty */
+
 #define UV_POLL_PRIVATE_FIELDS                                                \
   uv__io_t io_watcher;
 
@@ -326,6 +338,7 @@ typedef struct {
   struct addrinfo* hints;                                                     \
   char* hostname;                                                             \
   char* service;                                                              \
+  struct addrinfo* res;	// apicjd 
   struct addrinfo* addrinfo;                                                  \
   int retcode;
 

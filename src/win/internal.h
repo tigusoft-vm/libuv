@@ -241,6 +241,15 @@ void uv_poll_endgame(uv_loop_t* loop, uv_poll_t* handle);
 
 
 /*
+ * Manual IOCP
+ */
+void uv_process_iocp_req(uv_loop_t* loop, uv_req_t* req);
+
+int uv_iocp_close(uv_loop_t* loop, uv_iocp_t* handle);
+void uv_iocp_endgame(uv_loop_t* loop, uv_iocp_t* handle);
+
+
+/*
  * Timers
  */
 void uv_timer_endgame(uv_loop_t* loop, uv_timer_t* handle);

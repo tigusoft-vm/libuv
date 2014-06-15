@@ -328,11 +328,14 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     uv__update_time(loop);
 
   while (r != 0 && loop->stop_flag == 0) {
+    UV_TICK_START(loop, mode);
+
     uv__update_time(loop);
     uv__run_timers(loop);
     ran_pending = uv__run_pending(loop);
     uv__run_idle(loop);
     uv__run_prepare(loop);
+    uv__run_pending(loop);
 
     timeout = 0;
     if ((mode == UV_RUN_ONCE && !ran_pending) || mode == UV_RUN_DEFAULT)
@@ -356,6 +359,8 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     }
 
     r = uv__loop_alive(loop);
+    UV_TICK_STOP(loop, mode);	// apicjd
+
     if (mode == UV_RUN_ONCE || mode == UV_RUN_NOWAIT)
       break;
   }
@@ -769,7 +774,7 @@ static void maybe_resize(uv_loop_t* loop, unsigned int len) {
 
   nwatchers = next_power_of_two(len + 2) - 2;
   watchers = uv__realloc(loop->watchers,
-                         (nwatchers + 2) * sizeof(loop->watchers[0]));
+                         (nwatchers + 2) * sizeof(loop->watchers[0]));	// apidev
 
   if (watchers == NULL)
     abort();
@@ -1007,7 +1012,17 @@ int uv__dup2_cloexec(int oldfd, int newfd) {
     return r;
   }
 }
-
+/* IOCP only makes sense under windows. */
+int uv_iocp_stop(uv_iocp_t* handle) {
+  return UV_EINVAL;
+}
+/* IOCP only makes sense under windows. */
+int uv_iocp_start(uv_loop_t* loop,
+                  uv_iocp_t* handle,
+                  uv_os_file_t fd,
+                  uv_iocp_cb cb) {
+  return UV_EINVAL;
+}
 
 int uv_os_homedir(char* buffer, size_t* size) {
   struct passwd pw;
@@ -1018,6 +1033,7 @@ int uv_os_homedir(char* buffer, size_t* size) {
   size_t len;
   long initsize;
   int r;
+
 
   if (buffer == NULL || size == NULL || *size == 0)
     return -EINVAL;
