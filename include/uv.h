@@ -83,6 +83,7 @@ extern "C" {
   XX(EAI_PROTOCOL, "resolved protocol is unknown")                            \
   XX(EAI_SERVICE, "service not available for socket type")                    \
   XX(EAI_SOCKTYPE, "socket type not supported")                               \
+  XX(EAI_SYSTEM, "system error")                                              \
   XX(EALREADY, "connection already in progress")                              \
   XX(EBADF, "bad file descriptor")                                            \
   XX(EBUSY, "resource busy or locked")                                        \
@@ -243,6 +244,7 @@ typedef enum {
   UV_RUN_ONCE,
   UV_RUN_NOWAIT
 } uv_run_mode;
+
 
 
 UV_EXTERN unsigned int uv_version(void);
@@ -1161,6 +1163,7 @@ typedef enum {
   UV_FS_MKDTEMP,
   UV_FS_RENAME,
   UV_FS_SCANDIR,
+  UV_FS_READDIR,
   UV_FS_LINK,
   UV_FS_SYMLINK,
   UV_FS_READLINK,
@@ -1369,6 +1372,7 @@ UV_EXTERN int uv_fs_poll_getpath(uv_fs_poll_t* handle,
                                  char* buffer,
                                  size_t* size);
 
+UV_EXTERN int uv_fs_poll_getpath(uv_fs_poll_t* handle, char* buf, size_t* len);
 
 struct uv_signal_s {
   UV_HANDLE_FIELDS

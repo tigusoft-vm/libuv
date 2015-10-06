@@ -102,7 +102,7 @@ int uv_iocp_start(uv_loop_t* loop,
   uv_req_init(loop, &handle->req);
   handle->req.data = handle;
   handle->req.type = UV_IOCP_REQ;
-  handle->overlapped = &handle->req.overlapped;
+  handle->overlapped = &handle->req.u.io.overlapped;
   REGISTER_HANDLE_REQ(loop, handle, &handle->req);
 
   return 0;

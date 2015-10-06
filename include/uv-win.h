@@ -224,6 +224,8 @@ typedef HANDLE uv_os_fd_t;
 
 typedef HANDLE uv_os_file_t;
 
+typedef HANDLE uv_os_file_t;
+
 typedef HANDLE uv_thread_t;
 
 typedef HANDLE uv_sem_t;
@@ -484,6 +486,12 @@ typedef struct uv_ioargs_s {
   void* output;
   uint32_t output_len;
 } uv_ioargs_t; 
+
+#define UV_IOCP_PRIVATE_FIELDS                                                \
+  HANDLE handle;                                                              \
+  OVERLAPPED ol;                                                              \
+  uv_req_t req;                                                               \
+  int activecnt;                                                              \
 
 #define UV_IOCP_PRIVATE_FIELDS                                                \
   HANDLE handle;                                                              \
