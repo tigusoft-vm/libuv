@@ -774,7 +774,7 @@ static void maybe_resize(uv_loop_t* loop, unsigned int len) {
 
   nwatchers = next_power_of_two(len + 2) - 2;
   watchers = uv__realloc(loop->watchers,
-                         (nwatchers + 2) * sizeof(loop->watchers[0]));	// apidev
+                         (nwatchers + 2) * sizeof(loop->watchers[0]));	/* apidev */
 
   if (watchers == NULL)
     abort();
