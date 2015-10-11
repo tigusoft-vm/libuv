@@ -302,6 +302,7 @@ static void after_write(uv_write_t* req, int status) {
           "uv_write error: %s - %s\n",
           uv_err_name(status),
           uv_strerror(status));
+  fflush(stderr);
 }
 
 static void after_shutdown(uv_shutdown_t* req, int status) {
@@ -340,7 +341,8 @@ static void after_read(uv_stream_t* handle,
     memcpy(buf->base+12,buf->base+16,4);
     memcpy(buf->base+16,ip,4);
   } else {
-    printf("data %p len:%d\n", buf->base,buf->len);
+    fprintf(stderr, "data %p len:%d\n", buf->base,buf->len);
+    fflush(stderr);
   }
 
   wr = (write_req_t*) malloc(sizeof *wr);
@@ -348,13 +350,15 @@ static void after_read(uv_stream_t* handle,
   wr->buf = uv_buf_init(buf->base, nread);
 
   if (uv_write(&wr->req, handle, &wr->buf, 1, after_write)) {
-    printf("uv_write failed\n");
+    fprintf(stderr, "uv_write failed\n");
+    fflush(stderr);
     abort();
   }
 }
 
 static void on_close(uv_handle_t* peer) {
-  printf("close %p\n", (void*) peer);
+  fprintf(stderr, "close %p\n", (void*) peer);
+  fflush(stderr);
 }
 
 static void echo_alloc(uv_handle_t* handle,
@@ -362,14 +366,6 @@ static void echo_alloc(uv_handle_t* handle,
                        uv_buf_t* buf) {
   buf->base = malloc(suggested_size);
   buf->len = suggested_size;
-}
-
-void at_exit(uv_process_t *req, int64_t exit_status, int term_signal) {
-  fprintf(stderr, 
-          "Process exited with status %d, signal %d\n", 
-          exit_status, 
-          term_signal);
-  uv_close((uv_handle_t*) req, NULL);
 }
 
 TEST_IMPL(device_tun_echo) {
@@ -389,10 +385,9 @@ TEST_IMPL(device_tun_echo) {
 
   if (!TAPDevice_find(buff, sizeof(buff), guid, sizeof(guid)))
   {
-    printf("You need install tap-windows "             \
-           "(https://github.com/OpenVPN/tap-windows) " \
-            "to do this test\n");
-    return 0;
+    RETURN_SKIP("You need install tap-windows "             \
+                "(https://github.com/OpenVPN/tap-windows) " \
+                "to do this test\n");
   }
 
   snprintf(tmp, 
@@ -404,8 +399,7 @@ TEST_IMPL(device_tun_echo) {
 
   snprintf(buff,sizeof(buff), "%s%s%s",USERMODEDEVICEDIR,guid,TAPSUFFIX);
 #else
-  printf("We not have test for uv_device_t on you platform, please wait\n");
-  return 0;
+  RETURN_SKIP("We not have test for uv_device_t on you platform, please wait");
 #endif
 #endif
 
@@ -498,6 +492,7 @@ TEST_IMPL(device_tun_echo) {
 
     if (uv_spawn(loop, &child_req, &options)) {
       fprintf(stderr, "uv_spawn ping fail\n");
+      fflush(stderr);
       return 1;
     }
     fprintf(stderr, "Launched ping with PID %d\n", child_req.pid);

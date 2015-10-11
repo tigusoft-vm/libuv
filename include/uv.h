@@ -648,8 +648,7 @@ struct uv_device_s {
 
 UV_EXTERN int uv_device_open(uv_loop_t* loop,
                              uv_device_t* device,
-                             uv_os_fd_t fd,
-                             int flags);
+                             uv_os_fd_t fd);
 UV_EXTERN int uv_device_init(uv_loop_t* loop,
                              uv_device_t* device,
                              const char* path,

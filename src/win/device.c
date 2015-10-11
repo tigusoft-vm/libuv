@@ -1,4 +1,4 @@
-/* Copyright Joyent, Inc. and other Node contributors. All rights reserved.
+/* Copyright The libuv project and contributors. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -29,32 +29,25 @@
 #include "stream-inl.h"
 #include "req-inl.h"
 
-/* A zero-size buffer for use by uv_device_read */
-static char uv_zero_[] = "";
-
-int uv_device_open(uv_loop_t* loop,
-                   uv_device_t* device,
-                   uv_os_fd_t fd,
-                   int flags) {
+static int uv__device_open(uv_loop_t* loop,
+                           uv_device_t* device,
+                           uv_os_fd_t fd,
+                           int flags) {
   int uvflags = 0;
-
   assert(device);
-  if (flags != O_RDONLY && flags != O_WRONLY && flags != O_RDWR) {
-    return -EINVAL;
-  }
 
+  if (flags == O_RDONLY)
+    uvflags |= UV_HANDLE_READABLE;
+  else if (flags == O_WRONLY)
+    uvflags |= UV_HANDLE_WRITABLE;
+  else if (flags == O_RDWR)
+    uvflags |= UV_HANDLE_READABLE | UV_HANDLE_WRITABLE;
+ 
   uv_stream_init(loop, (uv_stream_t*) device, UV_DEVICE);
   device->handle = fd;
   device->read_buffer.base = NULL;
   device->read_buffer.len = 0;
-
-  if (flags & O_RDONLY) {
-    uvflags |= UV_HANDLE_READABLE;
-  } else if (flags & O_WRONLY) {
-    uvflags |= UV_HANDLE_WRITABLE;
-  } else if (flags & O_RDWR) {
-    uvflags |= UV_HANDLE_READABLE | UV_HANDLE_WRITABLE;
-  }
+  device->flags = uvflags;
 
   /* Try to associate with IOCP. */
   if (!CreateIoCompletionPort(device->handle,
@@ -62,35 +55,37 @@ int uv_device_open(uv_loop_t* loop,
                               (ULONG_PTR) device,
                               0)) {
     DWORD err = GetLastError();
-    if (err) {
+    if (err)
       return uv_translate_sys_error(err);
-    }
   }
 
-  device->flags |= uvflags;
   uv_connection_init((uv_stream_t*) device);
   return 0;
+}
+
+int uv_device_open(uv_loop_t* loop,
+                    uv_device_t* device,
+                    uv_os_fd_t fd) {
+  return uv__device_open(loop, device, fd, O_RDWR);
 }
 
 int uv_device_init(uv_loop_t* loop,
                    uv_device_t* device,
                    const char* path,
                    int flags) {
-  HANDLE *handle;
+  HANDLE* handle;
   DWORD dwCreationDisposition = 0;
 
   assert(device);
-  if (flags != O_RDONLY && flags != O_WRONLY && flags != O_RDWR) {
-    return -EINVAL;
-  }
+  if (flags != O_RDONLY && flags != O_WRONLY && flags != O_RDWR)
+    return UV_EINVAL;
 
-  if (flags & O_RDONLY) {
+  if (flags == O_RDONLY)
     dwCreationDisposition |= GENERIC_READ;
-  } else if (flags & O_WRONLY) {
+  else if (flags == O_WRONLY)
     dwCreationDisposition |= GENERIC_WRITE;
-  } else if (flags & O_RDWR) {
+  else if (flags == O_RDWR)
     dwCreationDisposition |= (GENERIC_READ | GENERIC_WRITE);
-  }
 
   handle = CreateFile(path,
                       dwCreationDisposition,
@@ -102,7 +97,7 @@ int uv_device_init(uv_loop_t* loop,
   if (handle == INVALID_HANDLE_VALUE) {
     return uv_translate_sys_error(GetLastError());
   }
-  return uv_device_open(loop, device, handle, flags);
+  return uv__device_open(loop, device, handle, flags);
 }
 
 int uv_device_ioctl(uv_device_t* device,
@@ -159,22 +154,20 @@ static void uv_device_queue_read(uv_loop_t* loop, uv_device_t* handle) {
 
   if (r) {
     handle->flags |= UV_HANDLE_READ_PENDING;
-    handle->reqs_pending++;
     uv_insert_pending_req(loop, (uv_req_t*) req);
   } else {
     err = GetLastError();
     if (r == 0 && err == ERROR_IO_PENDING) {
       /* The req will be processed with IOCP. */
       handle->flags |= UV_HANDLE_READ_PENDING;
-      handle->reqs_pending++;
     } else {
       /* Make this req pending reporting an error. */
       SET_REQ_ERROR(req, err);
       uv_insert_pending_req(loop, (uv_req_t*) req);
-      handle->reqs_pending++;
     }
   } 
-};
+  handle->reqs_pending++;
+}
 
 int uv_device_read_start(uv_device_t* handle,
                          uv_alloc_cb alloc_cb,
@@ -191,9 +184,9 @@ int uv_device_read_start(uv_device_t* handle,
 
   /* If reading was stopped and then started again, there could still be a */
   /* read request pending. */
-  if (handle->flags & UV_HANDLE_READ_PENDING) {
+  if (handle->flags & UV_HANDLE_READ_PENDING)
     return 0;
-  }
+
   uv_device_queue_read(loop, handle);
   return 0; 
 }
@@ -207,9 +200,8 @@ int uv_device_write(uv_loop_t* loop,
   int result;
   DWORD err = 0;
   
-  if (nbufs != 1 && (nbufs != 0 || !handle)) {
+  if (nbufs != 1 && (nbufs != 0 || !handle))
     return ERROR_NOT_SUPPORTED;
-  }
 
   uv_req_init(loop, (uv_req_t*) req);
   req->type = UV_WRITE;
@@ -232,11 +224,11 @@ int uv_device_write(uv_loop_t* loop,
     REGISTER_HANDLE_REQ(loop, handle, req);
     uv_insert_pending_req(loop, (uv_req_t*) req);
   } else {
-    /* Request queued by the kernel. */
     err = GetLastError();
     if (err != ERROR_IO_PENDING)
       return GetLastError();
 
+    /* Request queued by the kernel. */
     req->u.io.queued_bytes = uv__count_bufs(bufs, nbufs);
     handle->reqs_pending++;
     handle->stream.conn.write_reqs_pending++;
@@ -258,45 +250,33 @@ void uv_process_device_read_req(uv_loop_t* loop,
 
   if (!REQ_SUCCESS(req)) {
     /* An error occurred doing the read. */
-    if (handle->flags & UV_HANDLE_READING)  {
-      handle->flags &= ~UV_HANDLE_READING;
-      DECREASE_ACTIVE_COUNT(loop, handle);
+    handle->flags &= ~UV_HANDLE_READING;
+    DECREASE_ACTIVE_COUNT(loop, handle);
 
-      err = GET_REQ_SOCK_ERROR(req);
-      handle->read_cb((uv_stream_t*) handle,
-                      uv_translate_sys_error(err),
-                      &handle->read_buffer);
-    }
+    err = GET_REQ_SOCK_ERROR(req);
+    handle->read_cb((uv_stream_t*) handle,
+                    uv_translate_sys_error(err),
+                    &handle->read_buffer);
   } else {
     if (req->u.io.overlapped.InternalHigh > 0) {
       /* Successful read */
       handle->read_cb((uv_stream_t*) handle,
                       req->u.io.overlapped.InternalHigh,
                       &handle->read_buffer);
-      /* Read again only if bytes == buf.len */
-      if (req->u.io.overlapped.InternalHigh < sizeof(handle->read_buffer.len))
-        goto done;
     } else {
       /* Connection closed */
-      if (handle->flags & UV_HANDLE_READING) {
-        handle->flags &= ~UV_HANDLE_READING;
-        DECREASE_ACTIVE_COUNT(loop, handle);
-      }
+      handle->flags &= ~UV_HANDLE_READING;
+      DECREASE_ACTIVE_COUNT(loop, handle);
       handle->flags &= ~UV_HANDLE_READABLE;
 
       handle->read_cb((uv_stream_t*) handle, UV_EOF, &handle->read_buffer);
-      goto done;
     }
   }
-  /* 
-    may be we need more do read operation 
-  */
-done:
+
   /* Post another read if still reading and not closing. */
   if (handle->flags & UV_HANDLE_READING &&
-      !handle->flags & UV_HANDLE_READ_PENDING) {
+      !handle->flags & UV_HANDLE_READ_PENDING)
     uv_device_queue_read(loop, handle);
-  }
 
   DECREASE_PENDING_REQ_COUNT(handle);
 }
@@ -320,29 +300,26 @@ void uv_process_device_write_req(uv_loop_t* loop,
   handle->stream.conn.write_reqs_pending--;
 
   if (handle->stream.conn.shutdown_req != NULL &&
-      handle->stream.conn.write_reqs_pending == 0) {
+      handle->stream.conn.write_reqs_pending == 0)
     uv_want_endgame(loop, (uv_handle_t*) handle);
-  }
 
   DECREASE_PENDING_REQ_COUNT(handle);
 }
-
 
 void uv_device_close(uv_loop_t* loop, uv_device_t* device) {
   if (device->flags & UV_HANDLE_READING) {
     device->flags &= ~UV_HANDLE_READING;
     DECREASE_ACTIVE_COUNT(loop, device);
   }
-
+  CancelIoEx(device->handle, NULL);
   CloseHandle(device->handle);
   device->handle = INVALID_HANDLE_VALUE;
 
   device->flags &= ~(UV_HANDLE_READABLE | UV_HANDLE_WRITABLE);
   uv__handle_closing(device);
 
-  if (device->reqs_pending == 0) {
+  if (device->reqs_pending == 0)
     uv_want_endgame(device->loop, (uv_handle_t*) device);
-  }
 }
 
 /* this should never be called */

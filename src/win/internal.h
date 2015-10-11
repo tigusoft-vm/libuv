@@ -167,7 +167,7 @@ void uv_udp_close(uv_loop_t* loop, uv_udp_t* handle);
 void uv_udp_endgame(uv_loop_t* loop, uv_udp_t* handle);
 
 /*
- * DEVICE
+ * Device
  */
 int uv_device_read_start(uv_device_t* handle, uv_alloc_cb alloc_cb,
     uv_read_cb read_cb);
