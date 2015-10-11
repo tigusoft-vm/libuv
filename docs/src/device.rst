@@ -56,17 +56,18 @@ API
 .. c:function::  int uv_device_init(uv_loop_t* handle, uv_device_t* device, const char* path, int flags);
 
     Initialize a new device with the given path. `path` must point a dev path, 
-    just ``/dev/device_name`` on linux, bsd or osx, and ``\.\Global\DeviceName``
-    or \\.\DeviceName on windows. `flags` must be O_RDONLY,O_WRONLY or O_RDWR.
+    for example ``/dev/device_name`` on linux, bsd or osx, and 
+    ``\.\Global\DeviceName`` or ``\\.\DeviceName`` on windows. `flags` must be
+    O_RDONLY, O_WRONLY or O_RDWR, and other values to open device on linux, 
+    like O_NOCTTY when opening a serial device.
 
-.. c:function::  int uv_device_open(uv_loop_t* handle, uv_device_t* device, uv_os_fd_t fd, int flags);
+.. c:function::  int uv_device_open(uv_loop_t* handle, uv_device_t* device, uv_os_fd_t fd);
 
     Initialize a new device with the given file descriptor. `fd` must be a dev
-    file descriptor. `flags` must be O_RDONLY,O_WRONLY or O_RDWR.
+    file descriptor. We assume that passed `fd` are readable and writable, if
+    it's not, the read or write operations will fail.
 
-.. c:function:: int uv_device_ioctl(uv_device_t* device,
-                                    unsigned long cmd,
-                                    uv_ioargs_t* args)
+.. c:function:: int uv_device_ioctl(uv_device_t* device, unsigned long cmd, uv_ioargs_t* args)
 
     Set or get device paramater, just wrap for DeviceIOControl or ioctl, `cmd` 
     is a device-dependent request code, request in or out data has encoded in 

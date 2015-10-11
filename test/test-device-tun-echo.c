@@ -1,4 +1,4 @@
-/* Copyright Joyent, Inc. and other Node contributors. All rights reserved.
+/* Copyright The libuv project and contributors. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -29,6 +29,7 @@
 #include <sys/ioctl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#include <unistd.h>
 #endif
 #include <fcntl.h>
 #include <errno.h>
@@ -50,23 +51,23 @@
 #define TAP_CONTROL_CODE(request,method) \
   CTL_CODE (FILE_DEVICE_UNKNOWN, request, method, FILE_ANY_ACCESS)
 
-#define TAP_IOCTL_GET_MAC               TAP_CONTROL_CODE (1, METHOD_BUFFERED)
-#define TAP_IOCTL_GET_VERSION           TAP_CONTROL_CODE (2, METHOD_BUFFERED)
-#define TAP_IOCTL_GET_MTU               TAP_CONTROL_CODE (3, METHOD_BUFFERED)
-#define TAP_IOCTL_GET_INFO              TAP_CONTROL_CODE (4, METHOD_BUFFERED)
-#define TAP_IOCTL_CONFIG_POINT_TO_POINT TAP_CONTROL_CODE (5, METHOD_BUFFERED)
-#define TAP_IOCTL_SET_MEDIA_STATUS      TAP_CONTROL_CODE (6, METHOD_BUFFERED)
-#define TAP_IOCTL_CONFIG_DHCP_MASQ      TAP_CONTROL_CODE (7, METHOD_BUFFERED)
-#define TAP_IOCTL_GET_LOG_LINE          TAP_CONTROL_CODE (8, METHOD_BUFFERED)
-#define TAP_IOCTL_CONFIG_DHCP_SET_OPT   TAP_CONTROL_CODE (9, METHOD_BUFFERED)
+#define TAP_IOCTL_GET_MAC               TAP_CONTROL_CODE (1,  METHOD_BUFFERED)
+#define TAP_IOCTL_GET_VERSION           TAP_CONTROL_CODE (2,  METHOD_BUFFERED)
+#define TAP_IOCTL_GET_MTU               TAP_CONTROL_CODE (3,  METHOD_BUFFERED)
+#define TAP_IOCTL_GET_INFO              TAP_CONTROL_CODE (4,  METHOD_BUFFERED)
+#define TAP_IOCTL_CONFIG_POINT_TO_POINT TAP_CONTROL_CODE (5,  METHOD_BUFFERED)
+#define TAP_IOCTL_SET_MEDIA_STATUS      TAP_CONTROL_CODE (6,  METHOD_BUFFERED)
+#define TAP_IOCTL_CONFIG_DHCP_MASQ      TAP_CONTROL_CODE (7,  METHOD_BUFFERED)
+#define TAP_IOCTL_GET_LOG_LINE          TAP_CONTROL_CODE (8,  METHOD_BUFFERED)
+#define TAP_IOCTL_CONFIG_DHCP_SET_OPT   TAP_CONTROL_CODE (9,  METHOD_BUFFERED)
+#define TAP_IOCTL_CONFIG_TUN            TAP_CONTROL_CODE (10, METHOD_BUFFERED)
 
 static int is_tap_win32_dev(const char *guid) {
   HKEY netcard_key;
-  LONG status;
   DWORD len;
   int i = 0;
 
-  status = RegOpenKeyEx(HKEY_LOCAL_MACHINE,
+  LONG status = RegOpenKeyEx(HKEY_LOCAL_MACHINE,
                         ADAPTER_KEY,
                         0,
                         KEY_READ,
@@ -154,13 +155,12 @@ static int get_device_guid(char *name,
                            int name_size,
                            char *actual_name,
                            int actual_name_size) {
-  LONG status;
   HKEY control_net_key;
   DWORD len;
   int stop = 0;
   int i;
 
-  status = RegOpenKeyEx(HKEY_LOCAL_MACHINE, 
+  LONG status = RegOpenKeyEx(HKEY_LOCAL_MACHINE,
                         NETWORK_CONNECTIONS_KEY, 
                         0, 
                         KEY_READ, 
@@ -238,35 +238,20 @@ static int get_device_guid(char *name,
             continue;
           }
         }
-        else {
+        else
           _snprintf(actual_name, actual_name_size, "%s", name_data);
-        }
       }
-
       stop = 1;
     }
-
     RegCloseKey(connKey);
   }
 
   RegCloseKey (control_net_key);
-
   if (stop == 0)
     return -1;
 
   return 0;
 }
-
-const char* TAPDevice_find(char* preferredName,
-                           int nlen,
-                           char* buffguid,
-                           int len) {
-  if (get_device_guid(buffguid, len, preferredName, nlen)) {
-    return NULL;
-  }
-  return buffguid;
-}
-
 #endif
 
 typedef struct {
@@ -275,12 +260,15 @@ typedef struct {
 } write_req_t;
 
 static uv_loop_t* loop;
+static int step = 0;
 
 static void after_write(uv_write_t* req, int status);
 static void after_read(uv_stream_t*, ssize_t nread, const uv_buf_t* buf);
-static void on_close(uv_handle_t* peer);
+static void on_close(uv_handle_t* peer) {
+  fprintf(stderr, "close %p\n", (void*) peer);
+  fflush(stderr);
+}
 
-static int step = 0;
 static void after_write(uv_write_t* req, int status) {
   write_req_t* wr;
 
@@ -294,7 +282,6 @@ static void after_write(uv_write_t* req, int status) {
   free(wr);
 
   step += 1;
-
   if (status == 0)
     return;
 
@@ -302,20 +289,13 @@ static void after_write(uv_write_t* req, int status) {
           "uv_write error: %s - %s\n",
           uv_err_name(status),
           uv_strerror(status));
-}
-
-static void after_shutdown(uv_shutdown_t* req, int status) {
-  uv_close((uv_handle_t*) req->handle, on_close);
-  free(req);
+  fflush(stderr);
 }
 
 static void after_read(uv_stream_t* handle,
                        ssize_t nread,
                        const uv_buf_t* buf) {
-  write_req_t *wr;
-
   if (nread < 0) {
-    /* Error or EOF */
     ASSERT(nread == UV_EOF);
 
     free(buf->base);
@@ -324,37 +304,35 @@ static void after_read(uv_stream_t* handle,
   }
 
   if (nread == 0) {
-    /* Everything OK, but nothing read. */
     free(buf->base);
     return;
   }
 
-  /*
-   * Scan for the letter Q which signals that we should quit the server.
-   * If we get QS it means close the stream.
-   */
-  ASSERT(nread>20);
   if (nread > 20 && buf->len > 20) {
-    uint8_t ip[4];
-    memcpy(ip,buf->base+12,4);
-    memcpy(buf->base+12,buf->base+16,4);
-    memcpy(buf->base+16,ip,4);
+    if (buf->base[0] == 0x45) {
+      uint8_t ip[4];
+      write_req_t *wr;
+      memcpy(ip, buf->base + 12, 4);
+      memcpy(buf->base + 12, buf->base + 16, 4);
+      memcpy(buf->base + 16, ip, 4);
+      wr = (write_req_t*) malloc(sizeof (*wr));
+      ASSERT(wr != NULL);
+      memset(wr, 0, sizeof *wr);
+      wr->buf = uv_buf_init(buf->base, nread);
+
+      if (uv_write(&wr->req, handle, &wr->buf, 1, after_write)) {
+        fprintf(stderr, "uv_write failed\n");
+        fflush(stderr);
+        abort();
+      }
+    }else{
+      free(buf->base);
+      return;
+    }
   } else {
-    printf("data %p len:%d\n", buf->base,buf->len);
+    fprintf(stderr, "data %p len:%d\n", buf->base,(int) buf->len);
+    fflush(stderr);
   }
-
-  wr = (write_req_t*) malloc(sizeof *wr);
-  ASSERT(wr != NULL);
-  wr->buf = uv_buf_init(buf->base, nread);
-
-  if (uv_write(&wr->req, handle, &wr->buf, 1, after_write)) {
-    printf("uv_write failed\n");
-    abort();
-  }
-}
-
-static void on_close(uv_handle_t* peer) {
-  printf("close %p\n", (void*) peer);
 }
 
 static void echo_alloc(uv_handle_t* handle,
@@ -364,146 +342,168 @@ static void echo_alloc(uv_handle_t* handle,
   buf->len = suggested_size;
 }
 
-void at_exit(uv_process_t *req, int64_t exit_status, int term_signal) {
-  fprintf(stderr, 
-          "Process exited with status %d, signal %d\n", 
-          exit_status, 
-          term_signal);
-  uv_close((uv_handle_t*) req, NULL);
+static char dev_path[1024];
+#ifdef WIN32
+static char dev_name[1024];
+#endif
+static const char* tun_get_path() {
+#ifdef __linux__
+  strncpy(dev_path, "/dev/net/tun", sizeof(dev_path));
+  return dev_path;
+#elif defined(WIN32)
+#define BUF_SZ 1024
+  char guid[BUF_SZ] = {0};
+  if (get_device_guid(guid, sizeof(guid), dev_name, sizeof(dev_name))) {
+    fprintf(stderr,"You need install tap-windows "             \
+                "(https://github.com/OpenVPN/tap-windows) " \
+                "to do this test\n");
+    fflush(stderr);
+    return NULL;
+  }
+  snprintf(dev_path, sizeof(dev_path), "%s%s%s", USERMODEDEVICEDIR, guid, TAPSUFFIX);
+  return dev_path;
+#else
+  fprintf(stderr, "Only support device test on linux or windows\n");
+  fflush(stderr);
+  return NULL;
+#endif
 }
 
-TEST_IMPL(device_tun_echo) {
-  #define BUF_SZ 1024
-  uv_device_t device;
-  char buff[BUF_SZ] = {0};
-#ifdef WIN32
-  char guid[BUF_SZ] = {0};
-  char tmp[MAX_PATH];
-#endif
+static int tun_config(uv_device_t *device) {
   int r;
-
 #ifdef __linux__
-  strcpy(buff,"/dev/net/tun");
+  struct ifreq ifr;
+  uv_ioargs_t args = {0};
+  int flags = IFF_TUN | IFF_NO_PI;
+  args.arg = &ifr;
+
+  memset(&ifr, 0, sizeof(ifr));
+  ifr.ifr_flags = flags;
+  strncpy(ifr.ifr_name, "tun0", IFNAMSIZ);
+
+  r = uv_device_ioctl(device, TUNSETIFF, &args);
+  system("ifconfig tun0 10.3.0.2 netmask 255.255.255.252 pointopoint 10.3.0.1");
+#elif defined(WIN32)
+#define P2P
+  uv_ioargs_t ioarg = {0};
+  uint32_t version[3];
+#ifdef P2P
+  uint32_t p2p[2];
 #else
-#ifdef WIN32
-
-  if (!TAPDevice_find(buff, sizeof(buff), guid, sizeof(guid)))
-  {
-    printf("You need install tap-windows "             \
-           "(https://github.com/OpenVPN/tap-windows) " \
-            "to do this test\n");
-    return 0;
-  }
-
-  snprintf(tmp, 
+  uint32_t p2p[3];
+#endif
+  uint32_t enable = 1;
+  char tmp[MAX_PATH];
+  snprintf(tmp,
            sizeof(tmp),
            "%%windir%%\\system32\\netsh interface ip set address \"%s\"" \
            " static 10.3.0.2 255.255.255.0",
-           buff);
+           dev_name);
   system(tmp);
+  ioarg.input_len = sizeof(version);
+  ioarg.input = (void*) version;
+  ioarg.output_len = sizeof(version);
+  ioarg.output = (void*) version;
 
-  snprintf(buff,sizeof(buff), "%s%s%s",USERMODEDEVICEDIR,guid,TAPSUFFIX);
+  r = uv_device_ioctl(device, TAP_IOCTL_GET_VERSION, &ioarg);
+  ASSERT(r >= 0);
+  printf("version: %d.%d.%d\n", version[0], version[1], version[2]);
+  {
+    ULONG mtu;
+    int len = sizeof(ULONG);
+    if (DeviceIoControl(device->handle, TAP_IOCTL_GET_MTU,
+                        &mtu, sizeof(mtu),
+                        &mtu, sizeof(mtu), &len, NULL)) {
+      printf("TAP-Windows MTU=%d\n", (int) mtu);
+    }
+  }
+
+#ifdef P2P
+  p2p[0] = inet_addr("10.3.0.2");
+  p2p[1] = inet_addr("10.3.0.1");
 #else
-  printf("We not have test for uv_device_t on you platform, please wait\n");
-  return 0;
+  p2p[0] = inet_addr("10.3.0.2");
+  p2p[1] = inet_addr("10.3.0.0");
+  p2p[2] = inet_addr("255.255.255.0");
 #endif
+
+  ioarg.input_len = sizeof(p2p);
+  ioarg.input = (void*) &p2p;
+  ioarg.output_len = sizeof(p2p);
+  ioarg.output = (void*) &p2p;
+#ifdef P2P
+  r = uv_device_ioctl(device, TAP_IOCTL_CONFIG_POINT_TO_POINT, &ioarg);
+#else
+  r = uv_device_ioctl(device, TAP_IOCTL_CONFIG_TUN, &ioarg);
 #endif
+  ASSERT(r >= 0);
+
+  ioarg.input_len = sizeof(enable);
+  ioarg.input = (void*) &enable;
+  ioarg.output_len = sizeof(enable);
+  ioarg.output = (void*) &enable;
+  r = uv_device_ioctl(device, TAP_IOCTL_SET_MEDIA_STATUS, &ioarg);
+#endif
+  return r;
+}
+
+static void launch_ping() {
+#ifdef __linux__
+{
+  /* should be use uv_spawn */
+  if (fork() == 0) {
+    system("ping 10.3.0.1 -c 10");
+    exit(0);
+  }
+}
+#elif defined(WIN32)
+  uv_process_t child_req = {0};
+  uv_process_options_t options = {0};
+  uv_stdio_container_t child_stdio[3];
+  char* args[5];
+
+  args[0] = "ping";
+  args[1] = "10.3.0.1";
+  args[2] = "-n";
+  args[3] = "10";
+  args[4] = NULL;
+
+  options.exit_cb = NULL;
+  options.file = "ping";
+  options.args = args;
+  options.stdio_count = 3;
+
+  child_stdio[0].flags = UV_IGNORE;
+  child_stdio[1].flags = UV_INHERIT_FD;
+  child_stdio[1].data.fd = fileno(stdout);
+  child_stdio[2].flags = UV_INHERIT_FD;
+  child_stdio[2].data.fd = fileno(stderr);
+  options.stdio = child_stdio;
+
+  if (uv_spawn(loop, &child_req, &options)) {
+    fprintf(stderr, "uv_spawn ping fail\n");
+    fflush(stderr);
+  }
+  uv_unref((uv_handle_t*) &child_req);
+#endif
+}
+
+TEST_IMPL(device_tun_echo) {
+  uv_device_t device;
+  const char* path = tun_get_path();
+  int r;
+  if (!path)
+    return TEST_SKIP;
 
   loop = uv_default_loop();
-
-  r = uv_device_init(loop, &device, buff, O_RDWR);
+  memset(&device, 0, sizeof(device));
+  r = uv_device_init(loop, &device, path, O_RDWR);
   ASSERT(r == 0);
 
-#ifdef __linux__
-  {
-    struct ifreq ifr;
-    uv_ioargs_t args = {0};
-    int flags = IFF_TUN|IFF_NO_PI;
-    args.arg = &ifr;
+  r = tun_config(&device);
+  ASSERT(r >= 0);
 
-    memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_flags = flags;
-    strncpy(ifr.ifr_name, "tun0", IFNAMSIZ);
-
-    r = uv_device_ioctl(&device, TUNSETIFF, &args);
-    ASSERT(r >= 0);
-
-    /* should be use uv_spawn */
-    if (fork() == 0) {
-      system(
-        "ifconfig tun0 10.3.0.1 netmask 255.255.255.252 pointopoint 10.3.0.2"
-      ); 
-      system("ping 10.3.0.2 -c 10"); 
-      exit(0);
-   }
-  }
-#endif
-#ifdef WIN32
-  {
-    uv_process_t child_req = {0};
-    uv_process_options_t options = {0};
-    uv_stdio_container_t child_stdio[3];
-    char* args[5];
-
-    uv_ioargs_t ioarg = {0};
-    uint32_t version[3];
-    uint32_t p2p[2];
-    uint32_t enable = 1;
-
-    ioarg.input_len = sizeof(version);
-    ioarg.input = (void*) version;
-    ioarg.output_len = sizeof(version);
-    ioarg.output = (void*) version;
-
-    r = uv_device_ioctl(&device, TAP_IOCTL_GET_VERSION, &ioarg);
-    ASSERT(r >= 0);
-    printf("version: %d.%d.%d\n",version[0],version[1],version[2]);
-
-    p2p[0] = inet_addr("10.3.0.2");
-    p2p[1] = inet_addr("10.3.0.1");
-
-    ioarg.input_len = sizeof(p2p);
-    ioarg.input = (void*) &p2p;
-    ioarg.output_len = sizeof(p2p);
-    ioarg.output = (void*) &p2p;
-
-    r = uv_device_ioctl(&device, TAP_IOCTL_CONFIG_POINT_TO_POINT, &ioarg);
-    ASSERT(r >= 0);
-
-    ioarg.input_len = sizeof(enable);
-    ioarg.input = (void*) &enable;
-    ioarg.output_len = sizeof(enable);
-    ioarg.output = (void*) &enable;
-
-    r = uv_device_ioctl(&device, TAP_IOCTL_SET_MEDIA_STATUS, &ioarg);
-    ASSERT(r >= 0);
-
-    args[0] = "ping";
-    args[1] = "10.3.0.1";
-    args[2] = "-n";
-    args[3] = "10";
-    args[4] = NULL;
-
-    options.exit_cb = NULL;
-    options.file = "ping";
-    options.args = args;
-    options.stdio_count = 3;
-
-    child_stdio[0].flags = UV_IGNORE;
-    child_stdio[1].flags = UV_INHERIT_FD;
-    child_stdio[1].data.fd = fileno(stdout);
-    child_stdio[2].flags = UV_INHERIT_FD;
-    child_stdio[2].data.fd = fileno(stderr);
-    options.stdio = child_stdio;
-
-    if (uv_spawn(loop, &child_req, &options)) {
-      fprintf(stderr, "uv_spawn ping fail\n");
-      return 1;
-    }
-    fprintf(stderr, "Launched ping with PID %d\n", child_req.pid);
-    uv_unref((uv_handle_t*) &child_req);
-  }
-#endif
+  launch_ping();
 
   r = uv_read_start((uv_stream_t*) &device, echo_alloc, after_read);
   ASSERT(r == 0);

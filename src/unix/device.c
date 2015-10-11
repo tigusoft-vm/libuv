@@ -1,4 +1,4 @@
-/* Copyright Joyent, Inc. and other Node contributors. All rights reserved.
+/* Copyright The libuv project and contributors. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -26,37 +26,42 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 
+static int uv__device_open(uv_loop_t* loop,
+                           uv_device_t* device,
+                           uv_os_fd_t fd,
+                           int flags) {
+  int err;
+  int uvflags = 0;
+  struct stat s;
+  assert(device);
+
+  if (flags == O_RDONLY)
+    uvflags |= UV_STREAM_READABLE;
+  else if (flags == O_WRONLY)
+    uvflags |= UV_STREAM_WRITABLE;
+  else if (flags == O_RDWR)
+    uvflags |= UV_STREAM_READABLE | UV_STREAM_WRITABLE;
+
+  if (fstat(fd, &s))
+    return UV_UNKNOWN_HANDLE;
+  if (!S_ISCHR(s.st_mode) && !S_ISBLK(s.st_mode))
+    return UV_UNKNOWN_HANDLE; 
+
+  uv__stream_init(loop, (uv_stream_t*) device, UV_DEVICE);
+  err = uv__nonblock(fd, 1);
+  if (err)
+    return err;
+
+  err = uv__stream_open((uv_stream_t*) device, fd, uvflags);
+  if (err)
+    return err;
+  return 0;
+}
+
 int uv_device_open(uv_loop_t* loop,
                    uv_device_t* device,
-                   uv_os_fd_t fd,
-                   int flags) {
-  int err;
-  int stream_flags = 0;
-
-  assert(device);
-  if (flags != O_RDONLY && flags != O_WRONLY && flags != O_RDWR) {
-    return -EINVAL;
-  }
-  uv__stream_init(loop, (uv_stream_t*) device, UV_DEVICE);
-
-  if (flags & O_RDONLY) {
-    stream_flags |= UV_STREAM_READABLE;
-  } else if (flags & O_WRONLY) {
-    stream_flags |= UV_STREAM_WRITABLE;
-  } else if (flags & O_RDWR) {
-    stream_flags |= UV_STREAM_READABLE | UV_STREAM_WRITABLE;
-  }
-
-  err = uv__nonblock(fd, 1);
-  if (err) {
-    return err;
-  }
-
-  err = uv__stream_open((uv_stream_t*) device, fd, stream_flags);
-  if (err) {
-    return err;
-  }
-  return 0;
+                   uv_os_fd_t fd) {
+  return uv__device_open(loop, device, fd, O_RDWR);
 }
 
 int uv_device_init(uv_loop_t* loop,
@@ -66,15 +71,16 @@ int uv_device_init(uv_loop_t* loop,
   int fd, err;
 
   assert(device);
-  if (flags != O_RDONLY && flags != O_WRONLY && flags != O_RDWR)
+  if ((flags & O_ACCMODE) != O_RDONLY && 
+      (flags & O_ACCMODE) != O_WRONLY && 
+      (flags & O_ACCMODE) != O_RDWR)
     return -EINVAL;
 
   fd = open(path, flags); 
-  if (fd < 0) {
+  if (fd < 0) 
     return -errno;
-  }
 
-  err = uv_device_open(loop, device, fd, flags);
+  err = uv__device_open(loop, device, fd, flags & O_ACCMODE);
   if (err != 0) {
     close(fd);
     return err;
@@ -86,12 +92,11 @@ int uv_device_ioctl(uv_device_t* device,
                     unsigned long cmd,
                     uv_ioargs_t* args) {
   int err = ioctl(uv__stream_fd((uv_stream_t*) device), cmd, args->arg);
-  if (err < 0) {
+  if (err < 0)
     return -errno;
-  }
   return err;
 }
 
 void uv__device_close(uv_device_t* handle) {
-  uv__stream_close((uv_stream_t*)handle);
+  uv__stream_close((uv_stream_t*) handle);
 }
