@@ -34,7 +34,7 @@
 #define UV_VERSION_MINOR 7
 #define UV_VERSION_PATCH 6
 #define UV_VERSION_IS_RELEASE 0
-#define UV_VERSION_SUFFIX "dev"
+#define UV_VERSION_SUFFIX "dev-apidevice_after_review1"
 
 #define UV_VERSION_HEX  ((UV_VERSION_MAJOR << 16) | \
                          (UV_VERSION_MINOR <<  8) | \
