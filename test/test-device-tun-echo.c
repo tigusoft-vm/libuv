@@ -448,15 +448,6 @@ static int tun_config(uv_device_t *device) {
 }
 
 static void launch_ping() {
-#ifdef __linux__
-{
-  /* should be use uv_spawn */
-  if (fork() == 0) {
-    system("ping 10.3.0.1 -c 10");
-    exit(0);
-  }
-}
-#elif defined(WIN32)
   uv_process_t child_req = {0};
   uv_process_options_t options = {0};
   uv_stdio_container_t child_stdio[3];
@@ -464,7 +455,11 @@ static void launch_ping() {
 
   args[0] = "ping";
   args[1] = "10.3.0.1";
+#if WIN32
   args[2] = "-n";
+#else
+  args[2] = "-c";
+#endif
   args[3] = "10";
   args[4] = NULL;
 
@@ -485,7 +480,6 @@ static void launch_ping() {
     fflush(stderr);
   }
   uv_unref((uv_handle_t*) &child_req);
-#endif
 }
 
 TEST_IMPL(device_tun_echo) {
